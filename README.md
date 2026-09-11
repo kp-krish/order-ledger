@@ -62,3 +62,7 @@ One measured Windows 11 run delivered 440 events at 29.2 events/second, rejected
 20/20 duplicates, and recovered a 210-event restart backlog in 48.309 seconds while
 rejecting another 10/10 duplicates. See the [raw benchmark evidence](docs/benchmark-results.json)
 and the [failure lab](docs/failure-lab.md). Results vary with hardware and workload.
+
+The verified suite currently contains 16 Java tests (5 real Kafka/PostgreSQL
+integration tests) plus 3 producer tests. JaCoCo reports 85.1% line coverage
+(183 of 215 executable lines) for the Java service.

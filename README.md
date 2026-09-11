@@ -84,14 +84,19 @@ python -m scripts.benchmark --confirm-reset
 ```
 
 Use `--java C:\\path\\to\\java.exe` on Windows when Java 21 is not on `PATH`.
-The command writes `benchmark-results.json` containing sustained events/second,
-exact duplicate rejection, and backlog recovery time after a consumer restart.
+The command writes `benchmark-results.json`. It preloads a cold-start backlog, runs
+and discards a warmup phase, then measures at least 10,000 deliveries. Producer
+rate, end-to-end rate, database processing-window rate, p50/p99 durable latency,
+duplicate rejection, and restart recovery are reported separately.
 
-One measured Windows 11 run delivered 440 events at 29.2 events/second, rejected
-20/20 duplicates, and recovered a 210-event restart backlog in 48.309 seconds while
-rejecting another 10/10 duplicates. See the [raw benchmark evidence](docs/benchmark-results.json)
-and the [failure lab](docs/failure-lab.md). Results vary with hardware and workload.
+One measured Windows 11 run delivered 11,000 steady-state records at 47.7 events/s,
+while the producer delivered 3,018.5 events/s and all 500 duplicates were rejected.
+Unique-event durable latency was 114,841.988 ms p50 and 223,761.032 ms p99 because
+the single consumer accumulated a long serial database backlog. Cold-start
+throughput was 15.3 events/s. See the [raw benchmark evidence](docs/benchmark-results.json)
+and [methodology and diagnosis](docs/benchmark-methodology.md). Results vary with
+hardware and workload.
 
 The verified suite currently contains 16 Java tests (5 real Kafka/PostgreSQL
-integration tests) plus 3 producer tests. JaCoCo reports 85.1% line coverage
+integration tests) plus 5 Python tests. JaCoCo reports 85.1% line coverage
 (183 of 215 executable lines) for the Java service.

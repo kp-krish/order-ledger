@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import re
@@ -63,6 +64,85 @@ def processed_count(compose_file: str) -> int:
     return int(psql(compose_file, "SELECT COUNT(*) FROM processed_events;"))
 
 
+def processed_timestamps(compose_file: str, order_prefix: str) -> dict[str, float]:
+    escaped_prefix = order_prefix.replace("'", "''").replace("%", "\\%").replace("_", "\\_")
+    output = psql(compose_file, f"""
+        SELECT event_id::text || '|' || EXTRACT(EPOCH FROM processed_at)::text
+        FROM processed_events
+        WHERE order_id LIKE '{escaped_prefix}-%' ESCAPE '\\'
+        ORDER BY processed_at
+    """)
+    if not output:
+        return {}
+    return {
+        event_id: float(processed_at)
+        for event_id, processed_at in (line.split("|", 1) for line in output.splitlines())
+    }
+
+
+def percentile(values: list[float], quantile: float) -> float:
+    if not values:
+        raise ValueError("cannot calculate a percentile of an empty sample")
+    ordered = sorted(values)
+    rank = (len(ordered) - 1) * quantile
+    lower = math.floor(rank)
+    upper = math.ceil(rank)
+    if lower == upper:
+        return ordered[lower]
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (rank - lower)
+
+
+def phase_statistics(
+    compose_file: str,
+    order_prefix: str,
+    workload: list[tuple[str, dict]],
+    elapsed_seconds: float,
+    publish_seconds: float | None,
+) -> dict:
+    timestamps = processed_timestamps(compose_file, order_prefix)
+    occurred_at_by_id = {
+        event["eventId"]: datetime.fromisoformat(
+            event["occurredAt"].replace("Z", "+00:00")
+        ).timestamp()
+        for _, event in workload
+    }
+    missing = set(occurred_at_by_id) - set(timestamps)
+    if missing:
+        raise RuntimeError(f"{len(missing)} unique events are missing processed timestamps")
+
+    latencies_ms = [
+        (timestamps[event_id] - occurred_at) * 1000
+        for event_id, occurred_at in occurred_at_by_id.items()
+    ]
+    ordered_processing_times = sorted(timestamps.values())
+    processing_window = (
+        ordered_processing_times[-1] - ordered_processing_times[0]
+        if len(ordered_processing_times) > 1 else 0.0
+    )
+    processing_rate = (
+        (len(ordered_processing_times) - 1) / processing_window
+        if processing_window > 0 else 0.0
+    )
+    result = {
+        "deliveredEvents": len(workload),
+        "uniqueEvents": len(occurred_at_by_id),
+        "elapsedSeconds": round(elapsed_seconds, 3),
+        "eventsPerSecond": round(len(workload) / elapsed_seconds, 1),
+        "processingWindowSeconds": round(processing_window, 3),
+        "databaseProcessingEventsPerSecond": round(processing_rate, 1),
+        "latencyMilliseconds": {
+            "p50": round(percentile(latencies_ms, 0.50), 3),
+            "p99": round(percentile(latencies_ms, 0.99), 3),
+        },
+    }
+    if publish_seconds is not None:
+        result["producer"] = {
+            "elapsedSeconds": round(publish_seconds, 3),
+            "eventsPerSecond": round(len(workload) / publish_seconds, 1),
+        }
+    return result
+
+
 def metric_count(outcome: str) -> float:
     with urllib.request.urlopen("http://localhost:8080/actuator/prometheus", timeout=2) as response:
         body = response.read().decode("utf-8")
@@ -86,7 +166,7 @@ def wait_until(predicate, timeout: float, description: str) -> None:
     raise TimeoutError(f"Timed out waiting for {description}")
 
 
-def start_service(java: str, jar: str) -> subprocess.Popen[bytes]:
+def start_service(java: str, jar: str) -> tuple[subprocess.Popen[bytes], float]:
     environment = os.environ.copy()
     environment.update({
         "DATABASE_URL": DATABASE_URL,
@@ -95,6 +175,7 @@ def start_service(java: str, jar: str) -> subprocess.Popen[bytes]:
         "KAFKA_BOOTSTRAP_SERVERS": KAFKA_BOOTSTRAP_SERVERS,
         "ORDERS_TOPIC": ORDERS_TOPIC,
     })
+    started = time.monotonic()
     process = subprocess.Popen(
         [
             java, "-jar", jar,
@@ -105,7 +186,7 @@ def start_service(java: str, jar: str) -> subprocess.Popen[bytes]:
         env=environment,
     )
     wait_until(lambda: service_is_healthy(process), 60, "service health")
-    return process
+    return process, time.monotonic() - started
 
 
 def health_is_up() -> bool:
@@ -142,14 +223,46 @@ def wait_for_phase(
     )
 
 
+def run_live_phase(
+    compose_file: str,
+    topic: str,
+    workload: list[tuple[str, dict]],
+    order_prefix: str,
+    duplicate_baseline: int,
+    duplicates: int,
+    timeout: float,
+) -> dict:
+    expected_processed = processed_count(compose_file) + len({
+        event["eventId"] for _, event in workload
+    })
+    started = time.monotonic()
+    publish_started = time.monotonic()
+    publish(compose_file, topic, workload)
+    publish_seconds = time.monotonic() - publish_started
+    wait_for_phase(
+        compose_file,
+        expected_processed,
+        duplicate_baseline + duplicates,
+        timeout,
+    )
+    elapsed_seconds = time.monotonic() - started
+    return phase_statistics(
+        compose_file, order_prefix, workload, elapsed_seconds, publish_seconds
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--java", default="java")
     parser.add_argument("--jar", default="target/order-ledger-0.0.1-SNAPSHOT.jar")
     parser.add_argument("--compose-file", default="compose.yaml")
-    parser.add_argument("--orders", type=int, default=1000)
-    parser.add_argument("--duplicates", type=int, default=100)
-    parser.add_argument("--out-of-order", type=int, default=100)
+    parser.add_argument("--cold-orders", type=int, default=200)
+    parser.add_argument("--cold-duplicates", type=int, default=20)
+    parser.add_argument("--warmup-orders", type=int, default=1000)
+    parser.add_argument("--warmup-duplicates", type=int, default=100)
+    parser.add_argument("--orders", type=int, default=5000)
+    parser.add_argument("--duplicates", type=int, default=500)
+    parser.add_argument("--out-of-order", type=int, default=500)
     parser.add_argument("--restart-orders", type=int, default=500)
     parser.add_argument("--restart-duplicates", type=int, default=50)
     parser.add_argument("--timeout", type=float, default=180)
@@ -169,30 +282,84 @@ def main() -> None:
 
     command("docker", "compose", "-f", args.compose_file, "up", "-d", "--wait")
     restore_demo_credentials(args.compose_file)
-    service = start_service(args.java, args.jar)
+    bootstrap_service, _ = start_service(args.java, args.jar)
+    stop_service(bootstrap_service)
+    service = bootstrap_service
     try:
         reset_demo_database(args.compose_file)
         run_id = int(time.time())
+
+        cold_prefix = f"cold-{run_id}"
+        cold_workload = build_workload(
+            args.cold_orders, args.cold_duplicates, 0, 11, cold_prefix
+        )
+        publish(args.compose_file, ORDERS_TOPIC, cold_workload)
+        cold_started = time.monotonic()
+        service, cold_startup_seconds = start_service(args.java, args.jar)
+        wait_for_phase(
+            args.compose_file,
+            len(cold_workload) - args.cold_duplicates,
+            args.cold_duplicates,
+            args.timeout,
+        )
+        cold_elapsed = time.monotonic() - cold_started
+        cold_result = phase_statistics(
+            args.compose_file, cold_prefix, cold_workload, cold_elapsed, None
+        )
+        cold_result["startupSeconds"] = round(cold_startup_seconds, 3)
+        cold_result["duplicatesRejected"] = args.cold_duplicates
+
+        warmup_prefix = f"warmup-{run_id}"
+        warmup = build_workload(
+            args.warmup_orders, args.warmup_duplicates, 0, 51, warmup_prefix
+        )
+        run_live_phase(
+            args.compose_file,
+            ORDERS_TOPIC,
+            warmup,
+            warmup_prefix,
+            args.cold_duplicates,
+            args.warmup_duplicates,
+            args.timeout,
+        )
+
+        steady_prefix = f"steady-{run_id}"
         workload = build_workload(
             args.orders, args.duplicates, args.out_of_order, 101,
-            f"benchmark-{run_id}",
+            steady_prefix,
         )
+        if len(workload) < 10_000:
+            raise ValueError(
+                f"steady-state workload has {len(workload)} records; at least 10,000 are required"
+            )
         expected_unique = len(workload) - args.duplicates
-        started = time.monotonic()
-        publish(args.compose_file, ORDERS_TOPIC, workload)
-        wait_for_phase(args.compose_file, expected_unique, args.duplicates, args.timeout)
-        throughput_seconds = time.monotonic() - started
+        steady_result = run_live_phase(
+            args.compose_file,
+            ORDERS_TOPIC,
+            workload,
+            steady_prefix,
+            args.cold_duplicates + args.warmup_duplicates,
+            args.duplicates,
+            args.timeout,
+        )
+        steady_result["duplicatesRejected"] = args.duplicates
 
         stop_service(service)
+        recovery_prefix = f"recovery-{run_id}"
         recovery = build_workload(
             args.restart_orders, args.restart_duplicates, 0, 202,
-            f"recovery-{run_id}",
+            recovery_prefix,
         )
-        expected_after_recovery = expected_unique + len(recovery) - args.restart_duplicates
+        expected_after_recovery = (
+            len(cold_workload) - args.cold_duplicates
+            + len(warmup) - args.warmup_duplicates
+            + expected_unique
+            + len(recovery) - args.restart_duplicates
+        )
         publish(args.compose_file, ORDERS_TOPIC, recovery)
 
         recovery_started = time.monotonic()
-        service = start_service(args.java, args.jar)
+        service, recovery_startup_seconds = start_service(args.java, args.jar)
         wait_for_phase(
             args.compose_file,
             expected_after_recovery,
@@ -200,24 +367,34 @@ def main() -> None:
             args.timeout,
         )
         recovery_seconds = time.monotonic() - recovery_started
+        recovery_result = phase_statistics(
+            args.compose_file,
+            recovery_prefix,
+            recovery,
+            recovery_seconds,
+            None,
+        )
+        recovery_result["startupSeconds"] = round(recovery_startup_seconds, 3)
+        recovery_result["duplicatesRejected"] = args.restart_duplicates
 
         result = {
             "measuredAt": datetime.now(timezone.utc).isoformat(),
             "gitCommit": command("git", "rev-parse", "HEAD", capture=True).stdout.strip(),
+            "gitWorkingTreeDirty": bool(
+                command("git", "status", "--porcelain", capture=True).stdout.strip()
+            ),
             "machine": platform.platform(),
-            "throughput": {
-                "deliveredEvents": len(workload),
-                "elapsedSeconds": round(throughput_seconds, 3),
-                "eventsPerSecond": round(len(workload) / throughput_seconds, 1),
-                "duplicatesRequested": args.duplicates,
-                "duplicatesRejected": args.duplicates,
+            "methodology": {
+                "latencyDefinition": "event occurredAt to durable processed_at for each unique event",
+                "steadyStateMinimumDeliveredEvents": 10_000,
             },
-            "restartRecovery": {
-                "backlogEvents": len(recovery),
-                "elapsedSeconds": round(recovery_seconds, 3),
-                "duplicatesRequested": args.restart_duplicates,
-                "duplicatesRejected": args.restart_duplicates,
+            "coldStart": cold_result,
+            "warmup": {
+                "deliveredEvents": len(warmup),
+                "discarded": True,
             },
+            "steadyState": steady_result,
+            "restartRecovery": recovery_result,
         }
         Path(args.output).write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(result, indent=2))

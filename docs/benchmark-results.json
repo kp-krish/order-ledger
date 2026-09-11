@@ -1,18 +1,59 @@
 {
-  "measuredAt": "2026-09-11T21:07:36.839669+00:00",
-  "gitCommit": "5769ef523a28985cdf5384f32e479aeed82ca29f",
+  "measuredAt": "2026-09-11T22:27:33.776494+00:00",
+  "gitCommit": "30e54028c868b6b5ffb91cde42085e9bddbd36c1",
+  "gitWorkingTreeDirty": true,
   "machine": "Windows-11-10.0.28120-SP0",
-  "throughput": {
-    "deliveredEvents": 440,
-    "elapsedSeconds": 15.066,
-    "eventsPerSecond": 29.2,
-    "duplicatesRequested": 20,
+  "methodology": {
+    "latencyDefinition": "event occurredAt to durable processed_at for each unique event",
+    "steadyStateMinimumDeliveredEvents": 10000
+  },
+  "coldStart": {
+    "deliveredEvents": 420,
+    "uniqueEvents": 400,
+    "elapsedSeconds": 27.492,
+    "eventsPerSecond": 15.3,
+    "processingWindowSeconds": 12.775,
+    "databaseProcessingEventsPerSecond": 31.2,
+    "latencyMilliseconds": {
+      "p50": 23803.342,
+      "p99": 30430.261
+    },
+    "startupSeconds": 11.167,
     "duplicatesRejected": 20
   },
+  "warmup": {
+    "deliveredEvents": 2100,
+    "discarded": true
+  },
+  "steadyState": {
+    "deliveredEvents": 11000,
+    "uniqueEvents": 10500,
+    "elapsedSeconds": 230.675,
+    "eventsPerSecond": 47.7,
+    "processingWindowSeconds": 223.383,
+    "databaseProcessingEventsPerSecond": 47.0,
+    "latencyMilliseconds": {
+      "p50": 114841.988,
+      "p99": 223761.032
+    },
+    "producer": {
+      "elapsedSeconds": 3.644,
+      "eventsPerSecond": 3018.5
+    },
+    "duplicatesRejected": 500
+  },
   "restartRecovery": {
-    "backlogEvents": 210,
-    "elapsedSeconds": 48.309,
-    "duplicatesRequested": 10,
-    "duplicatesRejected": 10
+    "deliveredEvents": 1050,
+    "uniqueEvents": 1000,
+    "elapsedSeconds": 69.804,
+    "eventsPerSecond": 15.0,
+    "processingWindowSeconds": 25.32,
+    "databaseProcessingEventsPerSecond": 39.5,
+    "latencyMilliseconds": {
+      "p50": 59357.542,
+      "p99": 71691.716
+    },
+    "startupSeconds": 10.659,
+    "duplicatesRejected": 50
   }
 }

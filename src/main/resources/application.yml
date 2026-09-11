@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: order-ledger
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/order_ledger}
+    username: ${DATABASE_USERNAME:order_ledger}
+    password: ${DATABASE_PASSWORD:order_ledger}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP:order-ledger}
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+order-ledger:
+  topic: ${ORDERS_TOPIC:orders.events}
+  topic-partitions: ${ORDERS_TOPIC_PARTITIONS:1}
+  topic-replicas: ${ORDERS_TOPIC_REPLICAS:1}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+
+server:
+  shutdown: graceful
+

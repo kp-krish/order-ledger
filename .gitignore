@@ -7,6 +7,6 @@ target/
 *.iml
 *.log
 .env
+.dist/
 .DS_Store
 Thumbs.db
-

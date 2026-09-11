@@ -6,6 +6,8 @@
 target/
 *.iml
 *.log
+__pycache__/
+*.py[cod]
 .env
 .dist/
 .DS_Store

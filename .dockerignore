@@ -1,0 +1,10 @@
+.git
+.github
+.dist
+.idea
+.vscode
+target
+docs
+scripts
+*.iml
+benchmark-results.json

@@ -1,0 +1,25 @@
+Closes: Java, Spring Boot, Kafka, event-driven architecture, idempotent consumers, schema design, integration testing with Testcontainers.
+
+Consumes an order event stream and maintains inventory state. Events are order.placed, order.cancelled, order.shipped. The service applies each event to a Postgres inventory table and flags oversells, then exposes the current state over a small REST API.
+Neutral domain on purpose. It is the same technical shape as payment reconciliation without claiming you built a payments rail.
+- Kafka topic orders.events, single partition to start, then three so you hit ordering problems on purpose
+- Spring Boot consumer using Spring Kafka
+- Postgres with three tables: 
+  - processed_events (event_id PK, processed_at)
+  - inventory (sku PK, qty_available, qty_reserved, version)
+  - order_lines (order_id, sku, qty, status)
+- REST: GET /inventory/{sku}, GET /orders/{id}
+- A small producer script that generates synthetic events, including deliberate duplicates and out-of-order sequences
+Kafka gives you at-least-once delivery, so the same event will arrive twice. The naive fix is a SELECT to check whether you have seen the event ID, but that races under concurrency.
+The real fix: insert the event ID into processed_events in the same transaction as the inventory mutation. A unique constraint violation means you have already processed it, so roll back and acknowledge. The database enforces idempotency rather than your application logic.
+Then make it worse on purpose, so you understand it:
+- Run three partitions and watch events for the same SKU arrive out of order. Fix with a per-order sequence number and reject stale versions.
+- Have two consumers update the same two SKUs in opposite order and hit a deadlock. Fix by always locking rows in a consistent order.
+If someone asks why you did it that way, you have a real answer, and both of those failures are things you will have actually seen.
+Use Testcontainers to spin real Postgres and Kafka in your integration tests rather than mocking them. This is the part that speaks directly to JDs asking about safely changing production systems.
+Write at least: a duplicate-delivery test, an out-of-order test, and a consumer-restart test that proves no events are lost or double applied.
+- events per second sustained on your laptop or one small instance
+- duplicate events correctly rejected out of N replayed
+- integration test count and line coverage
+- consumer lag recovery time after a restart
+Lets build this project

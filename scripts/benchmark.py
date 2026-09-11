@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import re
 import subprocess
@@ -16,6 +17,21 @@ from pathlib import Path
 from scripts.producer import build_workload, publish, seed_inventory
 
 
+DATABASE_NAME = os.getenv("POSTGRES_DB", "order_ledger")
+DATABASE_USERNAME = os.getenv(
+    "DATABASE_USERNAME", os.getenv("POSTGRES_USER", "order_ledger")
+)
+DATABASE_PASSWORD = os.getenv(
+    "DATABASE_PASSWORD", os.getenv("POSTGRES_PASSWORD", "order_ledger")
+)
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    f"jdbc:postgresql://localhost:{os.getenv('POSTGRES_HOST_PORT', '15432')}/{DATABASE_NAME}",
+)
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+ORDERS_TOPIC = os.getenv("ORDERS_TOPIC", "orders.events")
+
+
 def command(*parts: str, capture: bool = False) -> subprocess.CompletedProcess[str]:
     return subprocess.run(parts, check=True, text=True, capture_output=capture)
 
@@ -23,8 +39,8 @@ def command(*parts: str, capture: bool = False) -> subprocess.CompletedProcess[s
 def psql(compose_file: str, sql: str) -> str:
     result = command(
         "docker", "compose", "-f", compose_file, "exec", "-T", "postgres",
-        "psql", "-At", "-v", "ON_ERROR_STOP=1", "-U", "order_ledger",
-        "-d", "order_ledger", "-c", sql,
+        "psql", "-At", "-v", "ON_ERROR_STOP=1", "-U", DATABASE_USERNAME,
+        "-d", DATABASE_NAME, "-c", sql,
         capture=True,
     )
     return result.stdout.strip()
@@ -36,7 +52,11 @@ def reset_demo_database(compose_file: str) -> None:
 
 
 def restore_demo_credentials(compose_file: str) -> None:
-    psql(compose_file, "ALTER ROLE order_ledger WITH PASSWORD 'order_ledger';")
+    database_password = DATABASE_PASSWORD.replace("'", "''")
+    psql(
+        compose_file,
+        f"ALTER ROLE {DATABASE_USERNAME} WITH PASSWORD '{database_password}';",
+    )
 
 
 def processed_count(compose_file: str) -> int:
@@ -67,17 +87,22 @@ def wait_until(predicate, timeout: float, description: str) -> None:
 
 
 def start_service(java: str, jar: str) -> subprocess.Popen[bytes]:
+    environment = os.environ.copy()
+    environment.update({
+        "DATABASE_URL": DATABASE_URL,
+        "DATABASE_USERNAME": DATABASE_USERNAME,
+        "DATABASE_PASSWORD": DATABASE_PASSWORD,
+        "KAFKA_BOOTSTRAP_SERVERS": KAFKA_BOOTSTRAP_SERVERS,
+        "ORDERS_TOPIC": ORDERS_TOPIC,
+    })
     process = subprocess.Popen(
         [
             java, "-jar", jar,
-            "--spring.datasource.url=jdbc:postgresql://localhost:15432/order_ledger",
-            "--spring.datasource.username=order_ledger",
-            "--spring.datasource.password=order_ledger",
-            "--spring.kafka.bootstrap-servers=localhost:9092",
             "--debug=false",
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.STDOUT,
+        env=environment,
     )
     wait_until(lambda: service_is_healthy(process), 60, "service health")
     return process
@@ -154,7 +179,7 @@ def main() -> None:
         )
         expected_unique = len(workload) - args.duplicates
         started = time.monotonic()
-        publish(args.compose_file, "orders.events", workload)
+        publish(args.compose_file, ORDERS_TOPIC, workload)
         wait_for_phase(args.compose_file, expected_unique, args.duplicates, args.timeout)
         throughput_seconds = time.monotonic() - started
 
@@ -164,7 +189,7 @@ def main() -> None:
             f"recovery-{run_id}",
         )
         expected_after_recovery = expected_unique + len(recovery) - args.restart_duplicates
-        publish(args.compose_file, "orders.events", recovery)
+        publish(args.compose_file, ORDERS_TOPIC, recovery)
 
         recovery_started = time.monotonic()
         service = start_service(args.java, args.jar)

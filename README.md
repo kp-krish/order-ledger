@@ -18,6 +18,20 @@ The implementation roadmap and acceptance criteria live in [docs/PLAN.md](docs/P
 docker compose up -d
 ```
 
+Runtime connection settings are environment-driven and retain their local defaults:
+
+| Variable | Default | Used by |
+| --- | --- | --- |
+| `DATABASE_URL` | `jdbc:postgresql://localhost:15432/order_ledger` | service, benchmark |
+| `DATABASE_USERNAME` / `DATABASE_PASSWORD` | `order_ledger` | service, benchmark |
+| `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | `order_ledger` | Compose, scripts |
+| `POSTGRES_HOST_PORT` | `15432` | Compose, benchmark default URL |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | service, benchmark |
+| `KAFKA_DOCKER_BOOTSTRAP_SERVERS` | `kafka:19092` | producer CLI inside Compose |
+| `KAFKA_HOST_PORT` / `KAFKA_ADVERTISED_HOST` | `9092` / `localhost` | Compose |
+| `KAFKA_HEALTHCHECK_BOOTSTRAP_SERVERS` | `localhost:9092` | Compose health check |
+| `ORDERS_TOPIC` | `orders.events` | service and scripts |
+
 ## Build
 
 ```shell

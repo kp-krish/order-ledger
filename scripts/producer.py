@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import random
 import subprocess
 import uuid
@@ -14,6 +15,12 @@ from pathlib import Path
 from typing import Any
 
 SKUS = ("SKU-001", "SKU-002", "SKU-003", "SKU-004", "SKU-005")
+DEFAULT_TOPIC = os.getenv("ORDERS_TOPIC", "orders.events")
+DEFAULT_DOCKER_BOOTSTRAP_SERVERS = os.getenv(
+    "KAFKA_DOCKER_BOOTSTRAP_SERVERS", "kafka:19092"
+)
+DEFAULT_DATABASE_NAME = os.getenv("POSTGRES_DB", "order_ledger")
+DEFAULT_DATABASE_USERNAME = os.getenv("POSTGRES_USER", "order_ledger")
 
 
 def event_id(rng: random.Random) -> str:
@@ -87,8 +94,8 @@ def seed_inventory(compose_file: str) -> None:
     subprocess.run(
         [
             "docker", "compose", "-f", compose_file, "exec", "-T",
-            "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "order_ledger",
-            "-d", "order_ledger",
+            "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", DEFAULT_DATABASE_USERNAME,
+            "-d", DEFAULT_DATABASE_NAME,
         ],
         input=sql_path.read_text(encoding="utf-8"),
         text=True,
@@ -96,11 +103,16 @@ def seed_inventory(compose_file: str) -> None:
     )
 
 
-def ensure_partitions(compose_file: str, topic: str, partitions: int) -> None:
+def ensure_partitions(
+    compose_file: str,
+    topic: str,
+    partitions: int,
+    bootstrap_servers: str = DEFAULT_DOCKER_BOOTSTRAP_SERVERS,
+) -> None:
     subprocess.run(
         [
             "docker", "compose", "-f", compose_file, "exec", "-T", "kafka",
-            "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "kafka:19092",
+            "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", bootstrap_servers,
             "--alter", "--topic", topic, "--partitions", str(partitions),
         ],
         check=True,
@@ -111,11 +123,12 @@ def publish(
     compose_file: str,
     topic: str,
     records: list[tuple[str, dict[str, Any]]],
+    bootstrap_servers: str = DEFAULT_DOCKER_BOOTSTRAP_SERVERS,
 ) -> None:
     command = [
         "docker", "compose", "-f", compose_file, "exec", "-T", "kafka",
         "/opt/kafka/bin/kafka-console-producer.sh",
-        "--bootstrap-server", "kafka:19092",
+        "--bootstrap-server", bootstrap_servers,
         "--topic", topic,
         "--property", "parse.key=true",
         "--property", "key.separator=|",
@@ -137,7 +150,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-of-order", type=int, default=5)
     parser.add_argument("--random-seed", type=int, default=20260911)
     parser.add_argument("--order-prefix", default="order")
-    parser.add_argument("--topic", default="orders.events")
+    parser.add_argument("--topic", default=DEFAULT_TOPIC)
+    parser.add_argument(
+        "--bootstrap-servers", default=DEFAULT_DOCKER_BOOTSTRAP_SERVERS,
+        help="Kafka address reachable from the Compose kafka container",
+    )
     parser.add_argument("--compose-file", default="compose.yaml")
     parser.add_argument("--partitions", type=int, choices=(1, 3))
     parser.add_argument("--seed-inventory", action="store_true")
@@ -161,8 +178,10 @@ def main() -> None:
         if args.seed_inventory:
             seed_inventory(args.compose_file)
         if args.partitions:
-            ensure_partitions(args.compose_file, args.topic, args.partitions)
-        publish(args.compose_file, args.topic, records)
+            ensure_partitions(
+                args.compose_file, args.topic, args.partitions, args.bootstrap_servers
+            )
+        publish(args.compose_file, args.topic, records, args.bootstrap_servers)
 
     print(json.dumps({
         "orders": args.orders,

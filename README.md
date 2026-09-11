@@ -26,6 +26,21 @@ docker compose up -d
 
 On Windows PowerShell, use `./mvnw.cmd verify`.
 
+## Health and Prometheus metrics
+
+Actuator exposes the following operational endpoints:
+
+- `/actuator/health`
+- `/actuator/health/liveness`
+- `/actuator/health/readiness`
+- `/actuator/prometheus`
+
+The Prometheus scrape includes Kafka consumer lag as
+`kafka_consumer_fetch_manager_records_lag_max` and JVM memory as
+`jvm_memory_used_bytes`, `jvm_memory_committed_bytes`, and
+`jvm_memory_max_bytes`. The lag gauge can be `NaN` until the consumer has fetched
+its first record.
+
 ## Generate demo events
 
 Start the service, then seed the five demo SKUs and publish a workload:

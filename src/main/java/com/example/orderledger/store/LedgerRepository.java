@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
 
@@ -68,6 +69,14 @@ public class LedgerRepository {
                 """,
                 new MapSqlParameterSource("skus", sortedSkus),
                 LedgerRepository::mapInventory);
+    }
+
+    public Optional<InventoryState> findInventory(String sku) {
+        return jdbcTemplate.query("""
+                SELECT sku, qty_available, qty_reserved, oversold, version
+                FROM inventory
+                WHERE sku = ?
+                """, LedgerRepository::mapInventory, sku).stream().findFirst();
     }
 
     public List<OrderLineState> findOrderLines(String orderId) {

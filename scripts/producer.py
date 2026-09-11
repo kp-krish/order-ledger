@@ -47,6 +47,7 @@ def build_workload(
     duplicates: int,
     out_of_order: int,
     seed: int,
+    order_prefix: str = "order",
 ) -> list[tuple[str, dict[str, Any]]]:
     if orders < 1:
         raise ValueError("orders must be at least 1")
@@ -58,7 +59,7 @@ def build_workload(
     rng = random.Random(seed)
     records: list[tuple[str, dict[str, Any]]] = []
     for number in range(orders):
-        order_id = f"order-{number + 1:06d}"
+        order_id = f"{order_prefix}-{number + 1:06d}"
         line_count = rng.randint(1, 2)
         lines = [
             {"sku": sku, "qty": rng.randint(1, 4)}
@@ -135,6 +136,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duplicates", type=int, default=10)
     parser.add_argument("--out-of-order", type=int, default=5)
     parser.add_argument("--random-seed", type=int, default=20260911)
+    parser.add_argument("--order-prefix", default="order")
     parser.add_argument("--topic", default="orders.events")
     parser.add_argument("--compose-file", default="compose.yaml")
     parser.add_argument("--partitions", type=int, choices=(1, 3))
@@ -150,6 +152,7 @@ def main() -> None:
         args.duplicates,
         args.out_of_order,
         args.random_seed,
+        args.order_prefix,
     )
     if args.dry_run:
         for key, event in records:
@@ -172,4 +175,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

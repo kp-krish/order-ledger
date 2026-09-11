@@ -1,0 +1,18 @@
+{
+  "measuredAt": "2026-09-11T21:07:36.839669+00:00",
+  "gitCommit": "5769ef523a28985cdf5384f32e479aeed82ca29f",
+  "machine": "Windows-11-10.0.28120-SP0",
+  "throughput": {
+    "deliveredEvents": 440,
+    "elapsedSeconds": 15.066,
+    "eventsPerSecond": 29.2,
+    "duplicatesRequested": 20,
+    "duplicatesRejected": 20
+  },
+  "restartRecovery": {
+    "backlogEvents": 210,
+    "elapsedSeconds": 48.309,
+    "duplicatesRequested": 10,
+    "duplicatesRejected": 10
+  }
+}

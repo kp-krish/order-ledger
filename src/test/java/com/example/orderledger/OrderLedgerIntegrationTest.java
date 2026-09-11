@@ -26,13 +26,20 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 @Testcontainers
-@SpringBootTest(properties = "order-ledger.topic-partitions=3")
+@SpringBootTest(properties = {
+        "order-ledger.topic-partitions=3",
+        "debug=false",
+        "logging.level.org.springframework.jdbc=INFO",
+        "logging.level.org.apache.kafka=WARN"
+})
 class OrderLedgerIntegrationTest {
 
     @Container
@@ -167,6 +174,23 @@ class OrderLedgerIntegrationTest {
         assertThat(processedEventCount()).isEqualTo(20);
     }
 
+    @Test
+    void naiveOppositeRowLockingActuallyDeadlocks() throws Exception {
+        var barrier = new CyclicBarrier(2);
+        var deadlocks = new AtomicInteger();
+        Callable<Void> leftThenRight = naiveLockingTask("SKU-001", "SKU-002", barrier, deadlocks);
+        Callable<Void> rightThenLeft = naiveLockingTask("SKU-002", "SKU-001", barrier, deadlocks);
+
+        try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var futures = executor.invokeAll(List.of(leftThenRight, rightThenLeft));
+            for (var future : futures) {
+                future.get(10, TimeUnit.SECONDS);
+            }
+        }
+
+        assertThat(deadlocks).hasValue(1);
+    }
+
     private void send(OrderEvent event) throws Exception {
         kafkaTemplate.send("orders.events", event.orderId(), objectMapper.writeValueAsString(event))
                 .get(10, TimeUnit.SECONDS);
@@ -209,6 +233,39 @@ class OrderLedgerIntegrationTest {
                 .stream().allMatch(container -> container.isRunning()));
     }
 
+    private Callable<Void> naiveLockingTask(
+            String firstSku,
+            String secondSku,
+            CyclicBarrier barrier,
+            AtomicInteger deadlocks
+    ) {
+        return () -> {
+            try {
+                new org.springframework.transaction.support.TransactionTemplate(
+                        new org.springframework.jdbc.support.JdbcTransactionManager(
+                                jdbcTemplate.getDataSource()))
+                        .executeWithoutResult(status -> {
+                            jdbcTemplate.queryForObject(
+                                    "SELECT version FROM inventory WHERE sku = ? FOR UPDATE",
+                                    Long.class,
+                                    firstSku);
+                            try {
+                                barrier.await(5, TimeUnit.SECONDS);
+                            } catch (Exception exception) {
+                                throw new IllegalStateException(exception);
+                            }
+                            jdbcTemplate.queryForObject(
+                                    "SELECT version FROM inventory WHERE sku = ? FOR UPDATE",
+                                    Long.class,
+                                    secondSku);
+                        });
+            } catch (org.springframework.dao.PessimisticLockingFailureException exception) {
+                deadlocks.incrementAndGet();
+            }
+            return null;
+        };
+    }
+
     private static OrderEvent event(
             String orderId,
             long sequence,
@@ -218,4 +275,3 @@ class OrderLedgerIntegrationTest {
         return new OrderEvent(UUID.randomUUID(), 1, type, orderId, sequence, Instant.now(), lines);
     }
 }
-

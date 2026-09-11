@@ -2,7 +2,7 @@ spring:
   application:
     name: order-ledger
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/order_ledger}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:15432/order_ledger}
     username: ${DATABASE_USERNAME:order_ledger}
     password: ${DATABASE_PASSWORD:order_ledger}
     hikari:
@@ -39,4 +39,3 @@ management:
 
 server:
   shutdown: graceful
-

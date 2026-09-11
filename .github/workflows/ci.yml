@@ -21,6 +21,8 @@ jobs:
           cache: maven
       - name: Test and generate coverage
         run: ./mvnw --batch-mode verify
+      - name: Test synthetic workload generator
+        run: python -m unittest scripts.test_producer
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -28,4 +30,3 @@ jobs:
           path: |
             target/surefire-reports
             target/site/jacoco
-

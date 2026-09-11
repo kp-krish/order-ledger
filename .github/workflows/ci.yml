@@ -23,7 +23,7 @@ jobs:
         run: ./mvnw --batch-mode verify
       - name: Test synthetic workload generator
         run: python -m unittest scripts.test_producer
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-and-coverage-reports
